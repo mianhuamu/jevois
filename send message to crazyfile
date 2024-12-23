@@ -58,9 +58,9 @@ class PythonSandbox:
         self.prev_time = time.time()
         self.scale_factor = 1
 
-        self.TEXTONS_N_TEXTONS = 30
-        self.TEXTONS_PATCH_SIZE = 20
-        self.TEXTONS_DICTIONARY_PATH = "/jevois/data/shixu/5.bin"
+        self.TEXTONS_N_TEXTONS = 20
+        self.TEXTONS_PATCH_SIZE = 8
+        self.TEXTONS_DICTIONARY_PATH = "/jevois/data/shixu/2008.bin"
         self.TEXTONS_N_SAMPLES = 100
         self.TRAIN_FRAMES = 50
         # K-Means参数和阈值
