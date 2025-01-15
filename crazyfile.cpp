@@ -25,51 +25,59 @@
  * hello_world.c - App layer application of a simple hello world debug print every
  *   2 seconds.
  */
-#include <string.h>
-#include <stdint.h>
-#include <stdbool.h>
+#include <string.h>   
+#include <stdint.h>  
+#include <stdbool.h>  
+#include "app.h"      
+#include "cpx.h"      
+#include "FreeRTOS.h" 
+#include "task.h"     
+#include "debug.h"    
+#include "log.h"      
 
-#include "app.h"
-#include "cpx.h"
+static logVarId_t idX;   
+static float PositionX = 0.0f;
 
-#include "FreeRTOS.h"
-#include "task.h"
+static logVarId_t idY;  
+static float PositionY = 0.0f;
 
-#define DEBUG_MODULE "APP"
-#include "debug.h"
-
-typedef struct {
-    float x;
-    float y;
-} FloatCoordinates;
-
-// Callback that is called when a CPX packet arrives
 static void cpxPacketCallback(const CPXPacket_t* cpxRx);
 
-void appMain() {
-  DEBUG_PRINT("Hello! I am the stm_gap8_cpx app\n");
 
-  // Register a callback for CPX packets.
-  // Packets sent to destination=CPX_T_STM32 and function=CPX_F_APP will arrive here
-  cpxRegisterAppMessageHandler(cpxPacketCallback);
+void appMain(void)
+{
+    DEBUG_PRINT("Hello! I am the stm_gap8_cpx app\n");
 
-  while(1) {
-    vTaskDelay(M2T(3000));
-    DEBUG_PRINT("waiting for data \n");
-  }
+    idX = logGetVarId("stateEstimate", "x");
+    idY = logGetVarId("stateEstimate", "y");
+
+    cpxRegisterAppMessageHandler(cpxPacketCallback);
+
+    while(1)
+    {
+        vTaskDelay(M2T(3000));  
+        DEBUG_PRINT("waiting for data \n");
+    }
 }
 
-static void cpxPacketCallback(const CPXPacket_t* cpxRx) {
-    int8_t raw_x = (int8_t)cpxRx->data[0];
-    float divergence = ((float)raw_x) / 100.0f;
+static void cpxPacketCallback(const CPXPacket_t* cpxRx)
+{
+    
+    int8_t  raw_x  = (int8_t)cpxRx->data[0];
+    float   divergence = ((float)raw_x) / 100.0f;
 
-    uint8_t raw_y = cpxRx->data[1];
-    float obstacle = (float)raw_y;
+    uint8_t raw_y  = cpxRx->data[1];
+    float   obstacle = (float)raw_y;
 
     DEBUG_PRINT("Divergence: %.2f\n", (double)divergence);
     DEBUG_PRINT("Obstacle parameter: %.2f\n", (double)obstacle);
 
-    if (obstacle == 1.0f) {
+    if(obstacle == 1.0f)
+    {
         DEBUG_PRINT("Drone is landing normally.\n");
+        PositionX = logGetFloat(idX);
+        DEBUG_PRINT("PositionX is now: %f deg\n", (double)PositionX);
+        PositionY = logGetFloat(idY);
+        DEBUG_PRINT("PositionY is now: %f deg\n", (double)PositionY);
     }
 }
