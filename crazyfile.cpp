@@ -69,12 +69,12 @@ static void cpxPacketCallback(const CPXPacket_t* cpxRx)
 
     if (divergence > 0.2f)
     {
-        divergence = 0.1f;
+        divergence = 0.2f;
         DEBUG_PRINT("Adjusted Divergence (upper limit): %.2f\n", (double)divergence);
     }
     else if (divergence < -0.3f)
     {
-        divergence = -0.1f;
+        divergence = -0.3f;
         DEBUG_PRINT("Adjusted Divergence (lower limit): %.2f\n", (double)divergence);
     }
 
