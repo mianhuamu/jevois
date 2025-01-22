@@ -33,64 +33,52 @@ class PythonSandbox:
 
     def __init__(self):
         self.is_pro = False
-        self.log_level = 2
+        self.log_level = 1
         self.smoothed_divergence = 0.0
-        self.lp_factor = 0.1
-        self.div_factor = -2.25
-
+        self.lp_factor = 0.35
+        self.div_factor = -6
         self.real_obstacle_flag = 0
-
         self.use_harris = False
         self.old_gray = None
         self.p0 = None
         self.lk_params = {
-            'winSize': (15, 15),
-            'maxLevel': 2,
-            'criteria': (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.03)
+            'winSize': (11, 11),
+            'maxLevel': 3,
+            'criteria': (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01)
         }
-        self.max_corners = 50
-        self.quality_level = 0.15
-        self.min_distance = 5
-        self.block_size = 5
-
+        self.max_corners = 100
+        self.quality_level = 0.05
+        self.min_distance = 10
+        self.block_size = 7
         self.TEXTONS_N_TEXTONS = 30
-        self.TEXTONS_PATCH_SIZE = 10
-        self.TEXTONS_DICTIONARY_PATH = "/jevois/data/shixu/30100.bin"
+        self.TEXTONS_PATCH_SIZE = 16
+        self.TEXTONS_DICTIONARY_PATH = "/jevois/data/shixu/3016.bin"
         self.TEXTONS_N_SAMPLES = 60
-        self.TRAIN_FRAMES = 50
-
+        self.TRAIN_FRAMES = 66
         self.dictionary = []
         self.distributions_batch = []
         self.all_distributions = []
         self.frame_number = 0
         self.initializing = True
         self.initial_training_frames_collected = 0
-
         self.background_model = None 
-
         self.start_delay = 15.0  
         self.start_time = time.time()
         self.started = False
-
         self.chi_square_history = deque(maxlen=100)
-        self.threshold_k = 1.8
+        self.threshold_k =1.7
         self.consecutive_obstacle_frames = 0
-
         cflib.crtp.init_drivers(enable_serial_driver=True)
         self.packet = cflib.cpx.CPXPacket()
         self.packet.destination = cflib.cpx.CPXTarget.STM32
         self.packet.function = cflib.cpx.CPXFunction.APP
         self.frame = 0
-
-        # 初始化串口
         try:
             self.SerialSend = serial.Serial('/dev/ttyS0', 115200, timeout=2, write_timeout=2)
             jevois.LINFO('Serial port initialized successfully.')
         except Exception as e:
             jevois.LINFO(f'Failed to initialize serial port: {e}')
             self.SerialSend = None
-
-        # 如果存在文本子字典，则尝试加载
         if os.path.isfile(self.TEXTONS_DICTIONARY_PATH):
             jevois.LINFO(f'Loading texton dictionary from: {self.TEXTONS_DICTIONARY_PATH}')
             if not self.load_texton_dictionary(self.TEXTONS_DICTIONARY_PATH, 
@@ -101,34 +89,33 @@ class PythonSandbox:
         else:
             self.initializing = False
             jevois.LINFO(f'Texton dictionary file not found: {self.TEXTONS_DICTIONARY_PATH}')
-
         self.precomputed_xs = None
         self.precomputed_ys = None
         self.last_width = None
         self.last_height = None
-
-        jevois.LINFO("PythonTest initialized successfully.")
-
-        # 创建输出目录
         self.output_dir = "/jevois/output"
         self.divergence_dir = os.path.join(self.output_dir, "divergence")
         self.obstacles_dir = os.path.join(self.output_dir, "obstacles")
         self.obstacles_texton_dir = os.path.join(self.obstacles_dir, "texton_distribution")
         self.obstacles_images_dir = os.path.join(self.obstacles_dir, "images")
-
         os.makedirs(self.divergence_dir, exist_ok=True)
         os.makedirs(self.obstacles_texton_dir, exist_ok=True)
         os.makedirs(self.obstacles_images_dir, exist_ok=True)
-
         self.divergence_csv_path = os.path.join(self.divergence_dir, "divergence.csv")
+        if not os.path.isfile(self.divergence_csv_path):
+            try:
+                with open(self.divergence_csv_path, "w") as f:
+                    f.write("frame_number,divergence\n")
+                jevois.LINFO(f"Divergence CSV initialized with header at {self.divergence_csv_path}")
+            except Exception as e:
+                jevois.LINFO(f"Failed to initialize divergence CSV file: {e}")
         try:
-            self.divergence_file = open(self.divergence_csv_path, "w")
-            self.divergence_file.write("frame_number,divergence\n")
-            jevois.LINFO(f"Divergence CSV initialized at {self.divergence_csv_path}")
+            self.divergence_file = open(self.divergence_csv_path, "a")
+            self.divergence_file.flush()
+            jevois.LINFO(f"Divergence CSV opened for appending at {self.divergence_csv_path}")
         except Exception as e:
-            jevois.LINFO(f"Failed to initialize divergence CSV file: {e}")
+            jevois.LINFO(f"Failed to open divergence CSV file for appending: {e}")
             self.divergence_file = None
-
         self.obstacle_count = 0
 
     def __del__(self):
@@ -165,7 +152,6 @@ class PythonSandbox:
     def processNoUSB(self, inframe):
         try:
             current_time = time.time()
-            # 启动延时逻辑（15秒）
             if not self.started:
                 if current_time - self.start_time >= self.start_delay:
                     self.started = True
@@ -174,27 +160,17 @@ class PythonSandbox:
                     remaining_time = self.start_delay - (current_time - self.start_time)
                     jevois.LINFO(f"Waiting for startup delay: {remaining_time:.2f} seconds remaining.")
                     return
-
-            # 获取图像
             inimg = inframe.getCvBGR()
             if inimg is None or inimg.size == 0:
                 self.log_warning("Received empty frame.")
                 return
-
-            # 检查背景模型（若未初始化则直接返回）
             if not self.initializing and self.background_model is None:
                 self.log_warning("Background model not initialized.")
                 return
-
-            # 1) 计算光流
             self.process_frame_optical_flow(inimg, 1.0)
-            # 2) 障碍物检测
             self.process_frame_obstacle_detection(inimg)
-
             jevois.LINFO('Divergence is {:.2f}'.format(self.smoothed_divergence))
             jevois.LINFO('real_obstacle_flag={}'.format(self.real_obstacle_flag))
-
-            # 发送光流值和真实障碍物标志
             x_float_scaled = self.smoothed_divergence * 100.0
             x_int = int(round(x_float_scaled))
             if x_int < -128:
@@ -203,10 +179,8 @@ class PythonSandbox:
                 x_int = 127
             x_unsigned = x_int & 0xFF
             y = self.real_obstacle_flag
-
             self.packet.data = [x_unsigned, y]
             data_send = self.packet.wireData
-
             if len(data_send) > 100:
                 raise Exception('Packet is too large!')
             buff = bytearray([0xFF, len(data_send)])
@@ -215,19 +189,13 @@ class PythonSandbox:
             for b in buff:
                 checksum ^= b
             buff.append(checksum)
-
-            #jevois.LINFO('buff is {}'.format(buff))
             if self.SerialSend and self.SerialSend.is_open:
                 self.SerialSend.write(buff)
-                jevois.LINFO("Serial data (x,y) sent successfully.")
             else:
                 self.log_warning("Serial port is not open. Cannot send data.")
-
-
             if self.divergence_file:
                 self.divergence_file.write(f"{self.frame_number},{self.smoothed_divergence:.2f}\n")
-
-            # 若真实障碍物标志为 1，则保存对应帧数据
+                self.divergence_file.flush()
             if self.real_obstacle_flag == 1:
                 self.obstacle_count += 1
                 if hasattr(self, 'current_distribution') and self.current_distribution is not None:
@@ -237,14 +205,11 @@ class PythonSandbox:
                     self.log_info(f"Saved texton distribution for frame {self.frame_number} at {texton_path}")
                 else:
                     self.log_warning(f"No distribution data available for frame {self.frame_number}.")
-
                 image_path = os.path.join(self.obstacles_images_dir, f"frame_{self.frame_number}.png")
                 cv2.imwrite(image_path, inimg)
                 self.log_info(f"Saved obstacle image for frame {self.frame_number} at {image_path}")
-
             time.sleep(0.001)
             self.frame_number += 1
-
         except Exception as e:
             self.log_error(f"Exception in processNoUSB: {e}")
             traceback_str = traceback.format_exc()
@@ -252,7 +217,6 @@ class PythonSandbox:
 
     def process_frame_optical_flow(self, frame_bgr, dt):
         frame_gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
-
         if self.old_gray is None:
             self.old_gray = frame_gray.copy()
             self.p0 = cv2.goodFeaturesToTrack(
@@ -266,7 +230,6 @@ class PythonSandbox:
             if self.p0 is not None:
                 self.p0 = self.p0.reshape(-1, 1, 2)
             return
-
         if self.p0 is None or len(self.p0) == 0:
             self.p0 = cv2.goodFeaturesToTrack(
                 self.old_gray,
@@ -280,13 +243,11 @@ class PythonSandbox:
                 self.p0 = self.p0.reshape(-1, 1, 2)
             self.old_gray = frame_gray.copy()
             return
-
         p1, st, err = cv2.calcOpticalFlowPyrLK(self.old_gray, frame_gray, self.p0, None, **self.lk_params)
         if p1 is not None and st is not None:
             st = st.flatten()
             good_new = p1[st == 1].reshape(-1, 2)
             good_old = self.p0[st == 1].reshape(-1, 2)
-
             if len(good_new) < 2:
                 self.log_warning("Not enough good features. Re-detecting features.")
                 self.p0 = cv2.goodFeaturesToTrack(
@@ -305,7 +266,7 @@ class PythonSandbox:
                     self.Flow((gn[0], gn[1]), gn[0] - go[0], gn[1] - go[1])
                     for gn, go in zip(good_new, good_old)
                 ]
-                divergence = self.get_size_divergence(vectors, len(vectors), 20)
+                divergence = self.get_size_divergence(vectors, len(vectors), 40)
                 self.smoothed_divergence = self.low_pass_filter_recursive(
                     divergence, self.smoothed_divergence,
                     self.lp_factor, self.div_factor, dt
@@ -323,7 +284,6 @@ class PythonSandbox:
             )
             if self.p0 is not None:
                 self.p0 = self.p0.reshape(-1, 1, 2)
-
         self.old_gray = frame_gray.copy()
 
     def process_frame_obstacle_detection(self, frame_bgr):
@@ -332,20 +292,16 @@ class PythonSandbox:
             self.real_obstacle_flag = 0
             self.current_distribution = None
             return
-
         frame_yuv = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2YUV)
         Y = frame_yuv[:, :, 0].astype(np.float32)
         U = frame_yuv[:, :, 1].astype(np.float32)
         V = frame_yuv[:, :, 2].astype(np.float32)
-
         U_sub = cv2.resize(U, (U.shape[1] // 2, U.shape[0]), interpolation=cv2.INTER_AREA)
         V_sub = cv2.resize(V, (V.shape[1] // 2, V.shape[0]), interpolation=cv2.INTER_AREA)
-
         distribution = self.extract_texton_distribution_vectorized(
             Y, U_sub, V_sub, self.TEXTONS_PATCH_SIZE, self.TEXTONS_N_SAMPLES
         )
         self.current_distribution = distribution.copy()
-
         if self.initializing:
             self.distributions_batch.append(distribution)
             self.all_distributions.append(distribution)
@@ -368,7 +324,8 @@ class PythonSandbox:
             self.log_error("Background model training data is empty.")
             return False
         self.background_model = np.mean(data, axis=0)
-        self.background_model /= np.sum(self.background_model) if np.sum(self.background_model) > 0 else 1
+        if np.sum(self.background_model) > 0:
+            self.background_model /= np.sum(self.background_model)
         self.log_info("Background model trained successfully using Chi-Square method.")
         return True
 
@@ -377,21 +334,16 @@ class PythonSandbox:
             self.log_warning("Background model is not trained.")
             self.real_obstacle_flag = 0
             return
-
-        # 归一化
         if np.sum(distribution) > 0:
             distribution_normalized = distribution / np.sum(distribution)
         else:
             distribution_normalized = distribution
-
         chi_square_distance = 0.5 * np.sum(
             ((self.background_model - distribution_normalized) ** 2) /
             (self.background_model + distribution_normalized + 1e-10)
         )
         self.log_info(f"Chi-Square Distance: {chi_square_distance:.4f}")
-
         self.chi_square_history.append(chi_square_distance)
-
         if len(self.chi_square_history) >= 30:
             mean = np.mean(self.chi_square_history)
             std = np.std(self.chi_square_history)
@@ -400,14 +352,11 @@ class PythonSandbox:
         else:
             dynamic_threshold = 1
             self.log_info(f"Using fixed Threshold: {dynamic_threshold:.4f} (Insufficient history)")
-
         if chi_square_distance > dynamic_threshold:
             self.consecutive_obstacle_frames += 1
         else:
             self.consecutive_obstacle_frames = 0
-
-        # 连续 3 帧超过阈值才判定为障碍物
-        if self.consecutive_obstacle_frames >= 3:
+        if self.consecutive_obstacle_frames >= 5:
             self.real_obstacle_flag = 1
         else:
             self.real_obstacle_flag = 0
@@ -434,7 +383,6 @@ class PythonSandbox:
                         self.log_error("Incomplete Y data in dictionary.")
                         return False
                     texton.Y = np.frombuffer(Y_bytes, dtype='<f4').reshape((patch_size, patch_size))
-
                     U_bytes = f.read(4 * (patch_size // 2) * patch_size)
                     if len(U_bytes) < 4 * (patch_size // 2) * patch_size:
                         self.log_error("Incomplete U data in dictionary.")
@@ -442,7 +390,6 @@ class PythonSandbox:
                     texton.U = np.frombuffer(U_bytes, dtype='<f4').reshape(
                         (patch_size, patch_size // 2)
                     )
-
                     V_bytes = f.read(4 * (patch_size // 2) * patch_size)
                     if len(V_bytes) < 4 * (patch_size // 2) * patch_size:
                         self.log_error("Incomplete V data in dictionary.")
@@ -450,7 +397,6 @@ class PythonSandbox:
                     texton.V = np.frombuffer(V_bytes, dtype='<f4').reshape(
                         (patch_size, patch_size // 2)
                     )
-
                     if texton.Y.size == 0 or texton.U.size == 0 or texton.V.size == 0:
                         self.log_error("Empty texton data encountered.")
                         return False
@@ -493,18 +439,15 @@ class PythonSandbox:
         distribution = np.zeros(n_textons, dtype=np.float32)
         if n_textons == 0:
             return distribution
-
         height, width = Y.shape
         xs, ys = self.generate_random_samples(width, height, patch_size, n_samples)
         if len(xs) == 0:
             return distribution
         patch_count = len(xs)
-        xs_u = xs // 2  
-
+        xs_u = xs // 2
         patch_indices_y = ys[:, None] + np.arange(patch_size)
         patch_indices_x = xs[:, None] + np.arange(patch_size)
         patch_indices_x_u = xs_u[:, None] + np.arange(patch_size // 2)
-
         try:
             patch_Y = Y[patch_indices_y[:, :, None], patch_indices_x[:, None, :]]
             patch_U = U[patch_indices_y[:, :, None], patch_indices_x_u[:, None, :]]
@@ -514,23 +457,18 @@ class PythonSandbox:
             traceback_str = traceback.format_exc()
             self.log_error(f"Traceback: {traceback_str}")
             return distribution
-
         patches_Y_flat = patch_Y.reshape(patch_count, -1)
         patches_U_flat = patch_U.reshape(patch_count, -1)
         patches_V_flat = patch_V.reshape(patch_count, -1)
-
         patches_flat = np.hstack((patches_Y_flat, patches_U_flat, patches_V_flat))
         patches_norm2 = np.sum(patches_flat ** 2, axis=1, keepdims=True)
-
         cross_term = np.dot(patches_flat, self.texton_matrix.T)
         distances_sq = patches_norm2 + self.texton_norm2 - 2 * cross_term
         distances_sq = np.maximum(distances_sq, 0.0)
         distances = np.sqrt(distances_sq, out=distances_sq)
-
         best_texton_indices = np.argmin(distances, axis=1)
         counts = np.bincount(best_texton_indices, minlength=n_textons)
         distribution[:len(counts)] = counts[:n_textons]
-
         if patch_count > 0:
             distribution /= patch_count
         return distribution
@@ -543,7 +481,6 @@ class PythonSandbox:
         max_samples = (count * (count - 1)) // 2
         if n_samples >= max_samples:
             n_samples = max_samples
-
         if n_samples == 0:
             for i in range(count):
                 for j in range(i + 1, count):
@@ -560,7 +497,6 @@ class PythonSandbox:
         else:
             rng = random.Random()
             indices = list(range(count))
-            # 随机采样
             for _ in range(n_samples):
                 i, j = rng.sample(indices, 2)
                 dx1 = vectors[i].pos[0] - vectors[j].pos[0]
@@ -573,7 +509,6 @@ class PythonSandbox:
                 distance_2_sq = dx2 * dx2 + dy2 * dy2
                 divs_sum += (np.sqrt(distance_2_sq) - np.sqrt(distance_1_sq)) / np.sqrt(distance_1_sq)
                 used_samples += 1
-
         if used_samples < 1:
             return 0.0
         return divs_sum / used_samples
