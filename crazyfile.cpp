@@ -25,24 +25,23 @@
  * hello_world.c - App layer application of a simple hello world debug print every
  *   2 seconds.
  */
-#include <string.h>   
-#include <stdint.h>  
-#include <stdbool.h>  
-#include "app.h"      
-#include "cpx.h"      
-#include "FreeRTOS.h" 
-#include "task.h"     
-#include "debug.h"    
-#include "log.h"      
+#include <string.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include "app.h"
+#include "cpx.h"
+#include "FreeRTOS.h"
+#include "task.h"
+#include "debug.h"
+#include "log.h"
 
-static logVarId_t idX;   
+static logVarId_t idX;
 static float PositionX = 0.0f;
 
-static logVarId_t idY;  
+static logVarId_t idY;
 static float PositionY = 0.0f;
 
 static void cpxPacketCallback(const CPXPacket_t* cpxRx);
-
 
 void appMain(void)
 {
@@ -55,22 +54,37 @@ void appMain(void)
 
     while(1)
     {
-        vTaskDelay(M2T(3000));  
+        vTaskDelay(M2T(3000));
         DEBUG_PRINT("waiting for data \n");
     }
 }
 
 static void cpxPacketCallback(const CPXPacket_t* cpxRx)
 {
-    
     int8_t  raw_x  = (int8_t)cpxRx->data[0];
     float   divergence = ((float)raw_x) / 100.0f;
 
     uint8_t raw_y  = cpxRx->data[1];
     float   obstacle = (float)raw_y;
 
+    if (divergence > 0.2f)
+    {
+        divergence = 0.1f;
+        DEBUG_PRINT("Adjusted Divergence (upper limit): %.2f\n", (double)divergence);
+    }
+    else if (divergence < -0.3f)
+    {
+        divergence = -0.1f;
+        DEBUG_PRINT("Adjusted Divergence (lower limit): %.2f\n", (double)divergence);
+    }
+
+    float k = 1.0f;
+    float D_star = -0.1f;
+    float v = k * (divergence - D_star);
+
     DEBUG_PRINT("Divergence: %.2f\n", (double)divergence);
     DEBUG_PRINT("Obstacle parameter: %.2f\n", (double)obstacle);
+    DEBUG_PRINT("v: %.2f\n", (double)v);
 
     if(obstacle == 1.0f)
     {
