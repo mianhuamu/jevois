@@ -35,8 +35,8 @@ class PythonSandbox:
         self.is_pro = False
         self.log_level = 1
         self.smoothed_divergence = 0.0
-        self.lp_factor = 0.2
-        self.div_factor = -4.5
+        self.lp_factor = 0.05
+        self.div_factor = -1.25
         self.real_obstacle_flag = 0
         self.use_harris = False
         self.old_gray = None
