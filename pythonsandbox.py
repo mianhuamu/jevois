@@ -77,6 +77,8 @@ class PythonSandbox:
         try:
             self.SerialSend = serial.Serial('/dev/ttyS0', 115200, timeout=2, write_timeout=2)
             jevois.LINFO('Serial port initialized successfully.')
+            self.SerialSend.reset_input_buffer()
+            self.SerialSend.reset_output_buffer()
         except Exception as e:
             jevois.LINFO(f'Failed to initialize serial port: {e}')
             self.SerialSend = None
@@ -191,6 +193,7 @@ class PythonSandbox:
             buff.append(checksum)
             if self.SerialSend and self.SerialSend.is_open:
                 self.SerialSend.write(buff)
+                self.SerialSend.flush()
             else:
                 self.log_warning("Serial port is not open. Cannot send data.")
             if self.divergence_file:
