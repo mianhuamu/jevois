@@ -35,8 +35,8 @@ class PythonSandbox:
         self.is_pro = False
         self.log_level = 1
         self.smoothed_divergence = 0.0
-        self.lp_factor = 0.35
-        self.div_factor = -6
+        self.lp_factor = 0.2
+        self.div_factor = -4.5
         self.real_obstacle_flag = 0
         self.use_harris = False
         self.old_gray = None
@@ -61,18 +61,19 @@ class PythonSandbox:
         self.frame_number = 0
         self.initializing = True
         self.initial_training_frames_collected = 0
-        self.background_model = None 
-        self.start_delay = 15.0  
+        self.background_model = None
+        self.start_delay = 15.0
         self.start_time = time.time()
         self.started = False
         self.chi_square_history = deque(maxlen=100)
-        self.threshold_k =1.7
+        self.threshold_k = 1.58
         self.consecutive_obstacle_frames = 0
         cflib.crtp.init_drivers(enable_serial_driver=True)
         self.packet = cflib.cpx.CPXPacket()
         self.packet.destination = cflib.cpx.CPXTarget.STM32
         self.packet.function = cflib.cpx.CPXFunction.APP
         self.frame = 0
+        self.previous_time = None
         try:
             self.SerialSend = serial.Serial('/dev/ttyS0', 115200, timeout=2, write_timeout=2)
             jevois.LINFO('Serial port initialized successfully.')
@@ -81,7 +82,7 @@ class PythonSandbox:
             self.SerialSend = None
         if os.path.isfile(self.TEXTONS_DICTIONARY_PATH):
             jevois.LINFO(f'Loading texton dictionary from: {self.TEXTONS_DICTIONARY_PATH}')
-            if not self.load_texton_dictionary(self.TEXTONS_DICTIONARY_PATH, 
+            if not self.load_texton_dictionary(self.TEXTONS_DICTIONARY_PATH,
                                                self.TEXTONS_N_TEXTONS,
                                                self.TEXTONS_PATCH_SIZE):
                 self.initializing = False
@@ -102,19 +103,13 @@ class PythonSandbox:
         os.makedirs(self.obstacles_texton_dir, exist_ok=True)
         os.makedirs(self.obstacles_images_dir, exist_ok=True)
         self.divergence_csv_path = os.path.join(self.divergence_dir, "divergence.csv")
-        if not os.path.isfile(self.divergence_csv_path):
-            try:
-                with open(self.divergence_csv_path, "w") as f:
-                    f.write("frame_number,divergence\n")
-                jevois.LINFO(f"Divergence CSV initialized with header at {self.divergence_csv_path}")
-            except Exception as e:
-                jevois.LINFO(f"Failed to initialize divergence CSV file: {e}")
         try:
-            self.divergence_file = open(self.divergence_csv_path, "a")
+            self.divergence_file = open(self.divergence_csv_path, "w")
+            self.divergence_file.write("frame_number,divergence\n")
             self.divergence_file.flush()
-            jevois.LINFO(f"Divergence CSV opened for appending at {self.divergence_csv_path}")
+            jevois.LINFO(f"Divergence CSV initialized and opened in write mode at {self.divergence_csv_path}")
         except Exception as e:
-            jevois.LINFO(f"Failed to open divergence CSV file for appending: {e}")
+            jevois.LINFO(f"Failed to initialize divergence CSV file: {e}")
             self.divergence_file = None
         self.obstacle_count = 0
 
@@ -152,6 +147,11 @@ class PythonSandbox:
     def processNoUSB(self, inframe):
         try:
             current_time = time.time()
+            if self.previous_time is None:
+                self.previous_time = current_time
+                return
+            dt = current_time - self.previous_time
+            self.previous_time = current_time
             if not self.started:
                 if current_time - self.start_time >= self.start_delay:
                     self.started = True
@@ -167,7 +167,7 @@ class PythonSandbox:
             if not self.initializing and self.background_model is None:
                 self.log_warning("Background model not initialized.")
                 return
-            self.process_frame_optical_flow(inimg, 1.0)
+            self.process_frame_optical_flow(inimg, dt)
             self.process_frame_obstacle_detection(inimg)
             jevois.LINFO('Divergence is {:.2f}'.format(self.smoothed_divergence))
             jevois.LINFO('real_obstacle_flag={}'.format(self.real_obstacle_flag))
@@ -194,7 +194,7 @@ class PythonSandbox:
             else:
                 self.log_warning("Serial port is not open. Cannot send data.")
             if self.divergence_file:
-                self.divergence_file.write(f"{self.frame_number},{self.smoothed_divergence:.2f}\n")
+                self.divergence_file.write(f"{self.frame_number},{self.smoothed_divergence:.3f}\n")
                 self.divergence_file.flush()
             if self.real_obstacle_flag == 1:
                 self.obstacle_count += 1
