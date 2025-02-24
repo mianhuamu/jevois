@@ -79,6 +79,7 @@ class PythonSandbox:
         except Exception as e:
             jevois.LINFO(f'Failed to initialize serial port: {e}')
             self.SerialSend = None
+
         if os.path.isfile(self.TEXTONS_DICTIONARY_PATH):
             jevois.LINFO(f'Loading texton dictionary from: {self.TEXTONS_DICTIONARY_PATH}')
             if not self.load_texton_dictionary(self.TEXTONS_DICTIONARY_PATH, 
@@ -89,27 +90,11 @@ class PythonSandbox:
         else:
             self.initializing = False
             jevois.LINFO(f'Texton dictionary file not found: {self.TEXTONS_DICTIONARY_PATH}')
+
         self.precomputed_xs = None
         self.precomputed_ys = None
         self.last_width = None
         self.last_height = None
-        self.output_dir = "/jevois/output"
-        self.divergence_dir = os.path.join(self.output_dir, "divergence")
-        self.obstacles_dir = os.path.join(self.output_dir, "obstacles")
-        self.obstacles_texton_dir = os.path.join(self.obstacles_dir, "texton_distribution")
-        self.obstacles_images_dir = os.path.join(self.obstacles_dir, "images")
-        os.makedirs(self.divergence_dir, exist_ok=True)
-        os.makedirs(self.obstacles_texton_dir, exist_ok=True)
-        os.makedirs(self.obstacles_images_dir, exist_ok=True)
-        self.divergence_csv_path = os.path.join(self.divergence_dir, "divergence.csv")
-        try:
-            self.divergence_file = open(self.divergence_csv_path, "w")
-            self.divergence_file.write("frame_number,divergence\n")
-            self.divergence_file.flush()
-            jevois.LINFO(f"Divergence CSV initialized and opened in write mode at {self.divergence_csv_path}")
-        except Exception as e:
-            jevois.LINFO(f"Failed to initialize divergence CSV file: {e}")
-            self.divergence_file = None
         self.obstacle_count = 0
         self.last_frame_time = None
 
@@ -118,9 +103,6 @@ class PythonSandbox:
             if self.SerialSend and self.SerialSend.is_open:
                 self.SerialSend.close()
                 jevois.LINFO("Serial port closed.")
-            if hasattr(self, 'divergence_file') and self.divergence_file:
-                self.divergence_file.close()
-                jevois.LINFO("Divergence CSV file closed.")
         except Exception as e:
             jevois.LINFO(f"Error during cleanup: {e}")
             traceback_str = traceback.format_exc()
@@ -196,21 +178,6 @@ class PythonSandbox:
                 self.SerialSend.write(buff)
             else:
                 self.log_warning("Serial port is not open. Cannot send data.")
-            if self.divergence_file:
-                self.divergence_file.write(f"{self.frame_number},{self.smoothed_divergence:.3f}\n")
-                self.divergence_file.flush()
-            if self.real_obstacle_flag == 1:
-                self.obstacle_count += 1
-                if hasattr(self, 'current_distribution') and self.current_distribution is not None:
-                    texton_path = os.path.join(self.obstacles_texton_dir,
-                                               f"frame_{self.frame_number}_texton.npy")
-                    np.save(texton_path, self.current_distribution)
-                    self.log_info(f"Saved texton distribution for frame {self.frame_number} at {texton_path}")
-                else:
-                    self.log_warning(f"No distribution data available for frame {self.frame_number}.")
-                image_path = os.path.join(self.obstacles_images_dir, f"frame_{self.frame_number}.png")
-                cv2.imwrite(image_path, inimg)
-                self.log_info(f"Saved obstacle image for frame {self.frame_number} at {image_path}")
             time.sleep(0.001)
             self.frame_number += 1
         except Exception as e:
@@ -390,16 +357,12 @@ class PythonSandbox:
                     if len(U_bytes) < 4 * (patch_size // 2) * patch_size:
                         self.log_error("Incomplete U data in dictionary.")
                         return False
-                    texton.U = np.frombuffer(U_bytes, dtype='<f4').reshape(
-                        (patch_size, patch_size // 2)
-                    )
+                    texton.U = np.frombuffer(U_bytes, dtype='<f4').reshape((patch_size, patch_size // 2))
                     V_bytes = f.read(4 * (patch_size // 2) * patch_size)
                     if len(V_bytes) < 4 * (patch_size // 2) * patch_size:
                         self.log_error("Incomplete V data in dictionary.")
                         return False
-                    texton.V = np.frombuffer(V_bytes, dtype='<f4').reshape(
-                        (patch_size, patch_size // 2)
-                    )
+                    texton.V = np.frombuffer(V_bytes, dtype='<f4').reshape((patch_size, patch_size // 2))
                     if texton.Y.size == 0 or texton.U.size == 0 or texton.V.size == 0:
                         self.log_error("Empty texton data encountered.")
                         return False
