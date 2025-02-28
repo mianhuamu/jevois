@@ -47,14 +47,14 @@ class PythonSandbox:
             'criteria': (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 20, 0.03)
         }
         self.max_corners = 50
-        self.quality_level = 0.1
+        self.quality_level = 0.2
         self.min_distance = 7
         self.block_size = 5
         self.TEXTONS_N_TEXTONS = 30
         self.TEXTONS_PATCH_SIZE = 16
         self.TEXTONS_DICTIONARY_PATH = "/jevois/data/shixu/3016.bin"
         self.TEXTONS_N_SAMPLES = 60
-        self.TRAIN_FRAMES = 66
+        self.TRAIN_FRAMES = 60
         self.dictionary = []
         self.distributions_batch = []
         self.all_distributions = []
@@ -66,7 +66,7 @@ class PythonSandbox:
         self.start_time = time.time()
         self.started = False
         self.chi_square_history = deque(maxlen=100)
-        self.threshold_k = 2
+        self.threshold_k = 1.68
         self.consecutive_obstacle_frames = 0
 
         # 用于发送数据
