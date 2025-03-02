@@ -176,6 +176,9 @@ class PythonSandbox:
                 self.log_warning("Received empty frame.")
                 return
 
+            # 加入高斯滤波，去除噪声（核大小可根据实际情况调整）
+            inimg = cv2.GaussianBlur(inimg, (5, 5), 0)
+
             # 如果还在初始化但字典没加载好，就不处理
             if not self.initializing and self.background_model is None:
                 self.log_warning("Background model not initialized.")
