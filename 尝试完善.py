@@ -35,8 +35,8 @@ class PythonSandbox:
         self.is_pro = False
         self.log_level = 1
         self.smoothed_divergence = 0.0
-        self.lp_factor = 0.05
-        self.div_factor = -2
+        self.lp_factor = 0.1
+        self.div_factor = -1
         self.real_obstacle_flag = 0
         self.use_harris = False
         self.old_gray = None
@@ -47,14 +47,14 @@ class PythonSandbox:
             'criteria': (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 20, 0.03)
         }
         self.max_corners = 50
-        self.quality_level = 0.1
+        self.quality_level = 0.2
         self.min_distance = 7
         self.block_size = 5
         self.TEXTONS_N_TEXTONS = 30
         self.TEXTONS_PATCH_SIZE = 16
         self.TEXTONS_DICTIONARY_PATH = "/jevois/data/shixu/3016.bin"
         self.TEXTONS_N_SAMPLES = 60
-        self.TRAIN_FRAMES = 66
+        self.TRAIN_FRAMES = 60
         self.dictionary = []
         self.distributions_batch = []
         self.all_distributions = []
@@ -66,7 +66,7 @@ class PythonSandbox:
         self.start_time = time.time()
         self.started = False
         self.chi_square_history = deque(maxlen=100)
-        self.threshold_k = 2
+        self.threshold_k = 1.68
         self.consecutive_obstacle_frames = 0
 
         # 用于发送数据
@@ -176,22 +176,7 @@ class PythonSandbox:
                 self.log_warning("Received empty frame.")
                 return
 
-            orig_height, orig_width = inimg.shape[:2]
-            # 如果检测到低分辨率, 对图像进行上采样以提高识别准确率
-            target_width = 640
-            if orig_width < target_width:
-                scale = target_width / orig_width
-                inimg = cv2.resize(inimg, (target_width, int(orig_height * scale)), interpolation=cv2.INTER_LINEAR)
-                self.log_info(f"Upscaled image from {orig_width} to {target_width} width for improved accuracy.")
-
-            # 针对240p低分辨率图像（宽度 <= 320），调整光流检测参数
-            if orig_width <= 320:
-                self.quality_level = 0.05
-                self.min_distance = 5
-                self.max_corners = 100
-                self.log_info("Adjusted optical flow parameters for 240p (low resolution) input.")
-
-            # 如果还在初始化但背景模型未建立，就不处理
+            # 如果还在初始化但字典没加载好，就不处理
             if not self.initializing and self.background_model is None:
                 self.log_warning("Background model not initialized.")
                 return
@@ -244,16 +229,17 @@ class PythonSandbox:
                 self.divergence_file.write(f"{self.frame_number},{self.smoothed_divergence:.3f}\n")
                 self.divergence_file.flush()
 
-            # 若检测到障碍物则保存
+            # 若检测到障碍物则保存（取消保存texton distribution）
             if self.real_obstacle_flag == 1:
                 self.obstacle_count += 1
-                if hasattr(self, 'current_distribution') and self.current_distribution is not None:
-                    texton_path = os.path.join(self.obstacles_texton_dir,
-                                               f"frame_{self.frame_number}_texton.npy")
-                    np.save(texton_path, self.current_distribution)
-                    self.log_info(f"Saved texton distribution for frame {self.frame_number} at {texton_path}")
-                else:
-                    self.log_warning(f"No distribution data available for frame {self.frame_number}.")
+                # 取消保存 texton distribution，故注释掉以下代码块
+                # if hasattr(self, 'current_distribution') and self.current_distribution is not None:
+                #     texton_path = os.path.join(self.obstacles_texton_dir,
+                #                                f"frame_{self.frame_number}_texton.npy")
+                #     np.save(texton_path, self.current_distribution)
+                #     self.log_info(f"Saved texton distribution for frame {self.frame_number} at {texton_path}")
+                # else:
+                #     self.log_warning(f"No distribution data available for frame {self.frame_number}.")
 
                 image_path = os.path.join(self.obstacles_images_dir, f"frame_{self.frame_number}.png")
                 cv2.imwrite(image_path, inimg)
