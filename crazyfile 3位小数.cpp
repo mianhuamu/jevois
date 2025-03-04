@@ -62,8 +62,8 @@ static void cpxPacketCallback(const CPXPacket_t* cpxRx)
     }
 
     // Calculate the velocity parameter
-    float k = 1.0f;
-    float D_star = -0.1f;
+    float k = 5.0f;
+    float D_star = -0.05f;
     float v = k * (divergence - D_star);
 
     // Print the received and calculated values with three decimal places
