@@ -101,15 +101,10 @@ class PythonSandbox:
         self.last_width = None
         self.last_height = None
 
-        # 输出目录处理
+        # 输出目录处理（删除保存图像和分布数据相关的目录）
         self.output_dir = "/jevois/output"
         self.divergence_dir = os.path.join(self.output_dir, "divergence")
-        self.obstacles_dir = os.path.join(self.output_dir, "obstacles")
-        self.obstacles_texton_dir = os.path.join(self.obstacles_dir, "texton_distribution")
-        self.obstacles_images_dir = os.path.join(self.obstacles_dir, "images")
         os.makedirs(self.divergence_dir, exist_ok=True)
-        os.makedirs(self.obstacles_texton_dir, exist_ok=True)
-        os.makedirs(self.obstacles_images_dir, exist_ok=True)
         self.divergence_csv_path = os.path.join(self.divergence_dir, "divergence.csv")
         
         # 尝试写入divergence日志
@@ -229,20 +224,7 @@ class PythonSandbox:
                 self.divergence_file.write(f"{self.frame_number},{self.smoothed_divergence:.3f}\n")
                 self.divergence_file.flush()
 
-            # 若检测到障碍物则保存
-            if self.real_obstacle_flag == 1:
-                self.obstacle_count += 1
-                if hasattr(self, 'current_distribution') and self.current_distribution is not None:
-                    texton_path = os.path.join(self.obstacles_texton_dir,
-                                               f"frame_{self.frame_number}_texton.npy")
-                    np.save(texton_path, self.current_distribution)
-                    self.log_info(f"Saved texton distribution for frame {self.frame_number} at {texton_path}")
-                else:
-                    self.log_warning(f"No distribution data available for frame {self.frame_number}.")
-
-                image_path = os.path.join(self.obstacles_images_dir, f"frame_{self.frame_number}.png")
-                cv2.imwrite(image_path, inimg)
-                self.log_info(f"Saved obstacle image for frame {self.frame_number} at {image_path}")
+            # 删除了保存图像和分布数据的代码
 
             time.sleep(0.001)
             self.frame_number += 1
@@ -391,7 +373,7 @@ class PythonSandbox:
             distribution_normalized = distribution
 
         chi_square_distance = 0.5 * np.sum(
-            ((self.background_model - distribution_normalized) ** 2) /
+            ((self.background_model - distribution_normalized) ** 2) / 
             (self.background_model + distribution_normalized + 1e-10)
         )
         self.log_info(f"Chi-Square Distance: {chi_square_distance:.4f}")
@@ -597,4 +579,3 @@ class PythonSandbox:
 
     def main(self):
         pass
-
