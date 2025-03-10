@@ -99,7 +99,7 @@ class PythonSandbox:
             self.initializing = False
             jevois.LINFO(f'Texton dictionary file not found: {self.TEXTONS_DICTIONARY_PATH}')
 
-        # ???????????????????????
+        # 预留部分（例如随机采样数据等）
         self.precomputed_xs = None
         self.precomputed_ys = None
         self.last_width = None
@@ -108,19 +108,6 @@ class PythonSandbox:
         self.output_dir = "/jevois/output"
         self.divergence_dir = os.path.join(self.output_dir, "divergence")
         os.makedirs(self.divergence_dir, exist_ok=True)
-        # 使用包含微秒的时间戳，确保每次运行生成的 CSV 文件不会覆盖之前的文件
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        self.flight_csv_path = os.path.join(self.divergence_dir, f"flight_{timestamp}.csv")
-        
-        try:
-            self.flight_file = open(self.flight_csv_path, "w")
-            # 更新 CSV 头，增加 threshold 和 delta 字段
-            self.flight_file.write("frame_number,divergence,chi_square,threshold,delta\n")
-            self.flight_file.flush()
-            jevois.LINFO(f"Flight CSV initialized and opened in write mode at {self.flight_csv_path}")
-        except Exception as e:
-            jevois.LINFO(f"Failed to initialize flight CSV file: {e}")
-            self.flight_file = None
 
         self.obstacle_count = 0
         self.last_frame_time = None
@@ -130,9 +117,6 @@ class PythonSandbox:
             if self.crazyfile and self.crazyfile.is_open:
                 self.crazyfile.close()
                 jevois.LINFO("Crazyfile port closed.")
-            if hasattr(self, 'flight_file') and self.flight_file:
-                self.flight_file.close()
-                jevois.LINFO("Flight CSV file closed.")
         except Exception as e:
             jevois.LINFO(f"Error during cleanup: {e}")
             traceback_str = traceback.format_exc()
@@ -195,12 +179,14 @@ class PythonSandbox:
             jevois.LINFO('Divergence is {:.3f}'.format(self.smoothed_divergence))
             jevois.LINFO('real_obstacle_flag={}'.format(self.real_obstacle_flag))
 
-            # 计算 (chi_square_distance - dynamic_threshold) 并保留两位小数
+            # 计算当前 chi-square 值和 delta 值（均保留两位小数）
+            chi_square_packet = round(self.current_chi_square, 2)
             delta = round(self.current_chi_square - self.dynamic_threshold, 2)
+            jevois.LINFO(f"Chi-Square (for packet): {chi_square_packet:.2f}")
             jevois.LINFO(f"Delta (chi_square - threshold): {delta:.2f}")
 
             # 准备并通过串口（crazyfile）发送数据
-            # 这里依然发送 divergence，但同时增加 delta 两个字节到数据包中
+            # 发送数据包结构：2 字节 divergence，1 字节障碍标志，2 字节 chi-square，2 字节 delta
             x_float_scaled = self.smoothed_divergence * 1000.0
             x_int = int(round(x_float_scaled))
             if x_int < -32768:
@@ -211,12 +197,18 @@ class PythonSandbox:
             x_byte1, x_byte2 = x_bytes
             y = self.real_obstacle_flag
 
-            # 将 delta 值转换为整数（乘以 100，以保留两位小数），并打包成 2 字节
+            # 将 chi-square 乘以 100 转换为整数并打包成 2 字节
+            chi_square_int = int(round(chi_square_packet * 100))
+            chi_square_bytes = struct.pack('<h', chi_square_int)
+
+            # 将 delta 乘以 100 转换为整数并打包成 2 字节
             delta_int = int(round(delta * 100))
             delta_bytes = struct.pack('<h', delta_int)
 
-            # 数据包结构：2 字节 divergence，1 字节障碍标志，2 字节 delta
-            self.packet.data = [x_byte1, x_byte2, y, delta_bytes[0], delta_bytes[1]]
+            # 组包：共 7 字节数据
+            self.packet.data = [x_byte1, x_byte2, y,
+                                chi_square_bytes[0], chi_square_bytes[1],
+                                delta_bytes[0], delta_bytes[1]]
             data_send = self.packet.wireData
             if len(data_send) > 100:
                 raise Exception('Packet is too large!')
@@ -233,11 +225,6 @@ class PythonSandbox:
             else:
                 self.log_warning("Crazyfile port is not open. Cannot send data.")
 
-            # 将 divergence、chi-square、动态阈值和 delta 写入 CSV 日志中
-            if self.flight_file:
-                self.flight_file.write(f"{self.frame_number},{self.smoothed_divergence:.3f},{self.current_chi_square:.4f},{self.dynamic_threshold:.4f},{delta:.2f}\n")
-                self.flight_file.flush()
-
             time.sleep(0.001)
             self.frame_number += 1
 
@@ -249,20 +236,18 @@ class PythonSandbox:
     def process_frame_optical_flow(self, frame_bgr, dt):
         frame_gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
 
-        # 定义一个函数，用于生成图像中心区域的 mask
+        # 定义生成图像中心区域 mask 的函数
         def create_center_mask(image):
             mask = np.zeros_like(image)
             height, width = image.shape
             center_x = width // 2
             center_y = height // 2
-            # 定义 ROI 为图像中心区域（此处设定为图像的一半，可调整）
             roi_width = width // 2
             roi_height = height // 2
             mask[center_y - roi_height//2 : center_y + roi_height//2,
                  center_x - roi_width//2 : center_x + roi_width//2] = 255
             return mask
 
-        # 如果没有上一帧，则初始化并在中心区域检测特征点
         if self.old_gray is None:
             self.old_gray = frame_gray.copy()
             mask = create_center_mask(self.old_gray)
@@ -273,13 +258,12 @@ class PythonSandbox:
                 minDistance=self.min_distance,
                 blockSize=self.block_size,
                 useHarrisDetector=self.use_harris,
-                mask=mask  # 使用中心区域 mask
+                mask=mask
             )
             if self.p0 is not None:
                 self.p0 = self.p0.reshape(-1, 1, 2)
             return
 
-        # 如果特征点不可用，则重新利用中心 mask 检测特征
         if self.p0 is None or len(self.p0) == 0:
             mask = create_center_mask(self.old_gray)
             self.p0 = cv2.goodFeaturesToTrack(
@@ -296,7 +280,6 @@ class PythonSandbox:
             self.old_gray = frame_gray.copy()
             return
 
-        # 计算光流
         p1, st, err = cv2.calcOpticalFlowPyrLK(self.old_gray, frame_gray, self.p0, None, **self.lk_params)
         if p1 is not None and st is not None:
             st = st.flatten()
@@ -318,7 +301,6 @@ class PythonSandbox:
                     self.p0 = self.p0.reshape(-1, 1, 2)
                 self.old_gray = frame_gray.copy()
             else:
-                # 计算光流向量，并更新 divergence
                 vectors = [
                     self.Flow((gn[0], gn[1]), gn[0] - go[0], gn[1] - go[1])
                     for gn, go in zip(good_new, good_old)
@@ -358,7 +340,6 @@ class PythonSandbox:
         U = frame_yuv[:, :, 1].astype(np.float32)
         V = frame_yuv[:, :, 2].astype(np.float32)
 
-        # 对 U 和 V 通道进行下采样
         U_sub = cv2.resize(U, (U.shape[1] // 2, U.shape[0]), interpolation=cv2.INTER_AREA)
         V_sub = cv2.resize(V, (V.shape[1] // 2, V.shape[0]), interpolation=cv2.INTER_AREA)
 
@@ -367,7 +348,6 @@ class PythonSandbox:
         )
         self.current_distribution = distribution.copy()
 
-        # 初始化阶段，利用多帧构建背景模型
         if self.initializing:
             self.distributions_batch.append(distribution)
             self.all_distributions.append(distribution)
@@ -409,7 +389,6 @@ class PythonSandbox:
         else:
             distribution_normalized = distribution
 
-        # 计算当前分布与背景模型之间的 Chi-Square 距离
         chi_square_distance = 0.5 * np.sum(
             ((self.background_model - distribution_normalized) ** 2) / 
             (self.background_model + distribution_normalized + 1e-10)
@@ -427,7 +406,6 @@ class PythonSandbox:
             dynamic_threshold = 1
             self.log_info(f"Using fixed Threshold: {dynamic_threshold:.4f} (Insufficient history)")
 
-        # 保存当前帧的阈值
         self.dynamic_threshold = dynamic_threshold
 
         if chi_square_distance > dynamic_threshold:
@@ -614,7 +592,6 @@ class PythonSandbox:
         if dt <= 0:
             self.log_warning("dt is non-positive in low_pass_filter_recursive.")
             return previous_divergence
-        # 对 new_divergence 进行缩放
         scaled_new = (new_divergence * div_factor) / dt
         return previous_divergence + (scaled_new - previous_divergence) * factor
 
